@@ -26,6 +26,7 @@
 #include "OnnxAttrs.hpp"
 #include "ShapeTensor.hpp"
 #include "onnx2trt_utils.hpp"
+#include "GatherElements.h"
 
 #include <algorithm> // For std::min, std::max
 #include <array>
@@ -3864,6 +3865,74 @@ DEFINE_BUILTIN_OP_IMPORTER(TRT_MaxPool)
 DEFINE_BUILTIN_OP_IMPORTER(TRT_AveragePool)
 {
     return importAveragePool(ctx, node, inputs);
+}
+
+DEFINE_BUILTIN_OP_IMPORTER(GatherElements)
+{
+    ASSERT(inputs.at(0).is_tensor(), nvonnxparser::ErrorCode::kUNSUPPORTED_NODE);
+    ASSERT(inputs.at(1).is_tensor(), nvonnxparser::ErrorCode::kUNSUPPORTED_NODE);
+    ASSERT(inputs.size() == 2, nvonnxparser::ErrorCode::kUNSUPPORTED_NODE);
+
+    auto& data = inputs.at(0).tensor();
+    auto& indices = inputs.at(1).tensor();
+
+    OnnxAttrs attrs(node, ctx);
+    unsigned int axis = attrs.get<int>("axis");
+
+    int data_dims = data.getDimensions().nbDims;
+    int idx_dims = indices.getDimensions().nbDims;
+
+//    printf("%u\n", axis);
+//
+//    for(int i = 0; i != data_dims; ++i) {
+//        printf("data shape %d: %d:\n", i, data.getDimensions().d[i]);
+//    }
+//
+//    for(int i = 0; i != idx_dims; ++i) {
+//        printf("indices shape %d: %d:\n", i, indices.getDimensions().d[i]);
+//    }
+
+    ASSERT(indices.getType() == nvinfer1::DataType::kINT32, nvonnxparser::ErrorCode::kINVALID_NODE);
+    ASSERT(0 <= axis && axis <= 2, nvonnxparser::ErrorCode::kINVALID_NODE);
+    ASSERT(0 < data_dims && data_dims <= 3, nvonnxparser::ErrorCode::kINVALID_NODE);
+    ASSERT(idx_dims == data_dims, nvonnxparser::ErrorCode::kINVALID_NODE);
+
+//    unsigned int t_c, t_h, t_w;
+//    unsigned int idx_c, idx_h, idx_w;
+//
+//    if(1 == idx_dims) {
+//        t_c = 1;
+//        t_h = 1;
+//        t_w = data.getDimensions().d[0];
+//
+//        idx_c = 1;
+//        idx_h = 1;
+//        idx_w = indices.getDimensions().d[0];
+//    }
+//    else if(2 == idx_dims) {
+//        t_c = 1;
+//        t_h = data.getDimensions().d[0];
+//        t_w = data.getDimensions().d[1];
+//
+//        idx_c = 1;
+//        idx_h = indices.getDimensions().d[0];
+//        idx_w = indices.getDimensions().d[1];
+//    }
+//    else {
+//        t_c = data.getDimensions().d[0];
+//        t_h = data.getDimensions().d[1];
+//        t_w = data.getDimensions().d[2];
+//
+//        idx_c = indices.getDimensions().d[0];
+//        idx_h = indices.getDimensions().d[1];
+//        idx_w = indices.getDimensions().d[2];
+//    }
+
+    nvinfer1::ITensor* gather_inputs[2] = {&data, &indices};
+
+    auto gather_elements_layer = GatherElementsPlugin(axis);
+    auto layer = ctx->network()->addPluginV2(gather_inputs, 2, gather_elements_layer);
+    RETURN_FIRST_OUTPUT(layer);
 }
 
 } // namespace
