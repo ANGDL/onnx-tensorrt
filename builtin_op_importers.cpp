@@ -28,6 +28,7 @@
 #include "onnx2trt_utils.hpp"
 #include "LoopHelpers.hpp"
 #include "RNNHelpers.hpp"
+#include "GatherElements.h"
 
 #include <algorithm> // For std::min, std::max
 #include <array>
@@ -4219,6 +4220,31 @@ DEFINE_BUILTIN_OP_IMPORTER(TRT_MaxPool)
 DEFINE_BUILTIN_OP_IMPORTER(TRT_AveragePool)
 {
     return importAveragePool(ctx, node, inputs);
+}
+
+DEFINE_BUILTIN_OP_IMPORTER(GatherElements)
+{
+    ASSERT(inputs.at(0).is_tensor(), nvonnxparser::ErrorCode::kUNSUPPORTED_NODE);
+    ASSERT(inputs.at(1).is_tensor(), nvonnxparser::ErrorCode::kUNSUPPORTED_NODE);
+    ASSERT(inputs.size() == 2, nvonnxparser::ErrorCode::kUNSUPPORTED_NODE);
+
+    auto& data = inputs.at(0).tensor();
+    auto& indices = inputs.at(1).tensor();
+
+    OnnxAttrs attrs(node, ctx);
+    unsigned int axis = attrs.get<int>("axis");
+
+    int data_dims = data.getDimensions().nbDims;
+    int idx_dims = indices.getDimensions().nbDims;
+
+    ASSERT(indices.getType() == nvinfer1::DataType::kINT32, nvonnxparser::ErrorCode::kINVALID_NODE);
+    ASSERT(idx_dims == data_dims, nvonnxparser::ErrorCode::kINVALID_NODE);
+
+    nvinfer1::ITensor* gather_inputs[2] = {&data, &indices};
+
+    auto gather_elements_layer = GatherElementsPlugin(axis);
+    auto layer = ctx->network()->addPluginV2(gather_inputs, 2, gather_elements_layer);
+    RETURN_FIRST_OUTPUT(layer);
 }
 
 } // namespace
