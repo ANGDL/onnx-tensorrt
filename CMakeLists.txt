@@ -19,7 +19,9 @@
  # DEALINGS IN THE SOFTWARE.
 
 cmake_minimum_required(VERSION 3.13)
-project(onnx2trt LANGUAGES CXX C)
+set(CMAKE_VERSION_THRESHOLD "3.15.0")
+
+project(onnx2trt LANGUAGES CXX C CUDA)
 
 set(ONNX2TRT_ROOT ${PROJECT_SOURCE_DIR})
 # Set C++11 as standard for the whole project
@@ -48,6 +50,9 @@ set(ONNX2TRT_PATCH 1)
 #--------------------------------------------------
 # Build configurations, global to all projects
 #--------------------------------------------------
+
+set(PLUGIN_SOURCES GatherElements.cpp gather_elements.cu)
+
 
 set(IMPORTER_SOURCES
   NvOnnxParser.cpp
@@ -103,7 +108,7 @@ if(NOT TARGET onnx_proto)
 endif()
 
 # TensorRT
-find_path(TENSORRT_INCLUDE_DIR NvInfer.h
+find_path(TENSORRT_INCLUDE_DIR NvInfer.h NvInferPlugin.h
   HINTS ${TENSORRT_ROOT} ${CUDA_TOOLKIT_ROOT_DIR}
   PATH_SUFFIXES include)
 MESSAGE(STATUS "Found TensorRT headers at ${TENSORRT_INCLUDE_DIR}")
@@ -130,12 +135,42 @@ if(NOT TENSORRT_FOUND)
   message(ERROR "Cannot find TensorRT library.")
 endif()
 
+
+ # --------------------------------
+ # Plugin library
+ # --------------------------------
+
+ set(CUDA_INCLUDE_DIRS "/usr/local/cuda/include")
+ set(CUDNN_INCLUDE_DIR "/usr/include")
+
+ list(APPEND CUDA_NVCC_FLAGS "-Xcompiler -fPIC --expt-extended-lambda")
+ if(${CMAKE_VERSION} VERSION_LESS ${CMAKE_VERSION_THRESHOLD})
+   CUDA_INCLUDE_DIRECTORIES(${CUDNN_INCLUDE_DIR} ${TENSORRT_INCLUDE_DIR})
+   CUDA_ADD_LIBRARY(nvonnxparser_plugin_static STATIC ${PLUGIN_SOURCES})
+ else()
+   include_directories(${CUDNN_INCLUDE_DIR} ${TENSORRT_INCLUDE_DIR})
+   add_library(nvonnxparser_plugin_static STATIC ${PLUGIN_SOURCES})
+ endif()
+
+ target_include_directories(nvonnxparser_plugin_static PUBLIC ${CUDA_INCLUDE_DIRS} ${ONNX_INCLUDE_DIRS} ${TENSORRT_INCLUDE_DIR} ${CUDNN_INCLUDE_DIR})
+ target_link_libraries(nvonnxparser_plugin_static ${TENSORRT_LIBRARY} cuda cudart cublas)
+ # shared
+# add_library(nvonnxparser_plugin SHARED ${PLUGIN_SOURCES})
+# target_include_directories(nvonnxparser_plugin PUBLIC ${CUDNN_INCLUDE_DIR} ${TENSORRT_INCLUDE_DIR})
+# target_link_libraries(nvonnxparser_plugin PUBLIC  ${TENSORRT_LIBRARY} cuda)
+# set_target_properties(nvonnxparser_plugin PROPERTIES
+#         VERSION   ${ONNX2TRT_MAJOR}.${ONNX2TRT_MINOR}.${ONNX2TRT_PATCH}
+#         SOVERSION ${ONNX2TRT_MAJOR}
+#         LINK_DEPENDS ${PARSER_LINKER_SCRIPT}
+#         LINK_FLAGS "-Wl,--version-script=${PARSER_LINKER_SCRIPT}"
+#         )
+
 # --------------------------------
 # Importer library
 # --------------------------------
 add_library(nvonnxparser SHARED ${IMPORTER_SOURCES})
 target_include_directories(nvonnxparser PUBLIC ${ONNX_INCLUDE_DIRS} ${TENSORRT_INCLUDE_DIR})
-target_link_libraries(nvonnxparser PUBLIC onnx_proto ${PROTOBUF_LIBRARY} ${TENSORRT_LIBRARY})
+target_link_libraries(nvonnxparser PUBLIC onnx_proto nvonnxparser_plugin_static ${PROTOBUF_LIBRARY} ${TENSORRT_LIBRARY} )
 set_target_properties(nvonnxparser PROPERTIES
   VERSION   ${ONNX2TRT_MAJOR}.${ONNX2TRT_MINOR}.${ONNX2TRT_PATCH}
   SOVERSION ${ONNX2TRT_MAJOR}
@@ -144,7 +179,7 @@ set_target_properties(nvonnxparser PROPERTIES
 )
 add_library(nvonnxparser_static STATIC ${IMPORTER_SOURCES})
 target_include_directories(nvonnxparser_static PUBLIC ${ONNX_INCLUDE_DIRS} ${TENSORRT_INCLUDE_DIR})
-target_link_libraries(nvonnxparser_static PUBLIC onnx_proto ${PROTOBUF_LIBRARY} ${TENSORRT_LIBRARY})
+target_link_libraries(nvonnxparser_static PUBLIC onnx_proto nvonnxparser_plugin_static ${PROTOBUF_LIBRARY} ${TENSORRT_LIBRARY})
 
 # --------------------------------
 # Onnxifi library
@@ -152,7 +187,7 @@ target_link_libraries(nvonnxparser_static PUBLIC onnx_proto ${PROTOBUF_LIBRARY} 
 if(BUILD_ONNXIFI)
   add_library(trt_onnxify SHARED ${ONNXIFI_SOURCES})
   target_include_directories(trt_onnxify PUBLIC ${CUDA_INCLUDE_DIR} ${ONNX_INCLUDE_DIRS} ${TENSORRT_INCLUDE_DIR})
-  target_link_libraries(trt_onnxify PUBLIC nvonnxparser_static ${CMAKE_THREAD_LIBS_INIT} ${CMAKE_DL_LIBS})
+  target_link_libraries(trt_onnxify PUBLIC nvonnxparser_static nvonnxparser_plugin ${CMAKE_THREAD_LIBS_INIT} ${CMAKE_DL_LIBS})
 endif()
 
 # --------------------------------
