@@ -73,7 +73,7 @@ size_t onnx2trt::GatherElementsPlugin::getWorkspaceSize(const PluginTensorDesc *
     int n_dim = inputs[0].dims.nbDims;
     size_t elements_size = 1;
     for(int i = 0; i < n_dim; ++i){
-        elements_size *= inputs[1].dims.d[1];
+        elements_size *= inputs[1].dims.d[i];
     }
 
     size_t size = (n_dim * 4 + n_dim * elements_size) * sizeof(int);

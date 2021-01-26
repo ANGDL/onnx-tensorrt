@@ -56,7 +56,7 @@ unsigned int get_input_index(
 
     unsigned int input_index = 0;
 
-    for(unsigned int i = 0; i < n_dim; ++i){
+    for(int i = 0; i < n_dim; ++i){
 
         if (i == axis){
             input_index += (axis_replace_idx * strides[i]);
@@ -91,11 +91,12 @@ void gather_elements_kernel(
         const int* index_dims,
         const int* tensor_strides, const int* index_strides,
         unsigned int* indices,
-        unsigned int max_indices_len){
+        unsigned int idx_data_size,
+        unsigned int tensor_data_size){
 
     unsigned int out_idx = (blockIdx.x + blockIdx.y * gridDim.x) * blockDim.x + threadIdx.x;
 
-    if (out_idx >= max_indices_len){
+    if (out_idx >= idx_data_size){
         return;
     }
 
@@ -106,7 +107,8 @@ void gather_elements_kernel(
 
     unsigned int in_idx = get_input_index(p_indices, tensor_strides, axis, index[out_idx], n_dim);
 
-    output[out_idx] = input[in_idx];
+    if (in_idx < tensor_data_size && in_idx >=0)
+        output[out_idx] = input[in_idx];
 
 }
 
@@ -129,14 +131,22 @@ void gather_elements(
         void* workspace,
         cudaStream_t stream){
 
-    unsigned int data_size = 1;
-    for(int i = 0; i != n_dim; ++i){
-        data_size *= index_dims[i];
+    assert(n_dim > 0);
+
+    unsigned int idx_data_size = 1;
+    for(int i = 0; i < n_dim; ++i){
+        idx_data_size *= index_dims[i];
     }
+
+    unsigned int tensor_data_size = 1;
+    for(int i = 0; i < n_dim; ++i){
+        tensor_data_size *= tensor_dims[i];
+    }
+
     unsigned int blocks = KERNEL_BLOCK;
 
-    if (KERNEL_BLOCK > data_size){
-        blocks = data_size;
+    if (KERNEL_BLOCK > idx_data_size){
+        blocks = idx_data_size;
     }
 
     int* tensor_dims_d = (int*)workspace;
@@ -144,16 +154,16 @@ void gather_elements(
 
     int* index_strides_d = index_dims_d + n_dim;
     int* input_tensor_strides_d = index_strides_d + n_dim;
-    unsigned int* indices_d = (unsigned int*)input_tensor_strides_d + n_dim;
+    auto* indices_d = (unsigned int*)(input_tensor_strides_d + n_dim);
 
     cudaMemcpyAsync(tensor_dims_d, tensor_dims, sizeof(int) * n_dim, cudaMemcpyHostToDevice, stream);
     cudaMemcpyAsync(index_dims_d, index_dims, sizeof(int) * n_dim, cudaMemcpyHostToDevice, stream);
 
     get_strides<<<1, 2, 0>>>(input_tensor_strides_d, n_dim, tensor_dims_d, index_strides_d, n_dim, index_dims_d);
 
-    gather_elements_kernel<<<cuda_gridsize(data_size, blocks), blocks, 0, stream>>>(
+    gather_elements_kernel<<<cuda_gridsize(idx_data_size, blocks), blocks, 0, stream>>>(
             (float*)input[0], (unsigned int*)input[1], (float*)output[0], axis, n_dim,
-            index_dims_d, input_tensor_strides_d, index_strides_d, indices_d, data_size);
+            index_dims_d, input_tensor_strides_d, index_strides_d, indices_d, idx_data_size, tensor_data_size);
 
     cudaStreamSynchronize(stream);
 }
